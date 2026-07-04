@@ -1,0 +1,92 @@
+blueprint:
+  name: Gestione termostato con finestra (salva stato, ripristina e blocca accensione)
+  description: >
+    Quando la finestra si apre e resta aperta per 30s, salva lo stato attuale del termostato
+    (anche se modificato dall'utente durante l'attesa) e lo spegne.
+    Durante i primi 30s dall'apertura l'utente può liberamente cambiare modalità.
+    Dopo i 30s, se la finestra resta aperta, ogni tentativo di accensione viene rispento immediatamente.
+    Quando la finestra si chiude e resta chiusa per 30s, ripristina lo stato salvato
+    (a meno che l'utente non abbia già selezionato manualmente un altro stato nel frattempo).
+  domain: automation
+  input:
+    sensore_finestra:
+      name: Sensore finestra
+      selector:
+        entity:
+          domain: binary_sensor
+    termostato:
+      name: Termostato
+      selector:
+        entity:
+          domain: climate
+    stato_salvato:
+      name: Input Select stato salvato
+      selector:
+        entity:
+          domain: input_select
+
+trigger:
+  - platform: state
+    entity_id: !input sensore_finestra
+    to: 'on'
+    for:
+      seconds: 30
+    id: finestra_aperta
+  - platform: state
+    entity_id: !input sensore_finestra
+    to: 'off'
+    for:
+      seconds: 30
+    id: finestra_chiusa
+  - platform: state
+    entity_id: !input termostato
+    to:
+      - 'auto'
+      - 'heat'
+      - 'cool'
+    id: stato_termostato
+
+variables:
+  input_termostato: !input termostato
+  input_sensore_finestra: !input sensore_finestra
+  input_stato_salvato: !input stato_salvato
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: finestra_aperta
+        sequence:
+          - service: input_select.select_option
+            target:
+              entity_id: "{{ input_stato_salvato }}"
+            data:
+              option: "{{ states(input_termostato) }}"
+          - service: climate.turn_off
+            target:
+              entity_id: "{{ input_termostato }}"
+      - conditions:
+          - condition: trigger
+            id: finestra_chiusa
+          - condition: template
+            value_template: "{{ states(input_termostato) == 'off' }}"
+          - condition: template
+            value_template: "{{ states(input_stato_salvato) in ['off', 'auto', 'heat', 'cool'] }}"
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: "{{ input_termostato }}"
+            data:
+              hvac_mode: "{{ states(input_stato_salvato) }}"
+      - conditions:
+          - condition: trigger
+            id: stato_termostato
+          - condition: state
+            entity_id: !input sensore_finestra
+            state: 'on'
+            for:
+              seconds: 30
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: "{{ input_termostato }}"
